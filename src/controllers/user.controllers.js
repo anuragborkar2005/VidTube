@@ -19,7 +19,7 @@ const generateAccessAndRefreshToken = async (userId) => {
 
   user.refreshToken = refreshToken;
   await user.save();
-
+  console.log("Access and Refresh Token Generated");
   return { accessToken, refreshToken };
 };
 
@@ -69,95 +69,143 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
   }
 });
 
+// const registerUser = asyncHandler(async (req, res) => {
+//   // if (!res.body) {
+//   //   throw new ApiError(400, "Request body is missing");
+//   // }
+//   const { fullname, username, email, password } = req.body;
+
+//   // if (!req.files || !req.files.avatar || !req.files.coverImage) {
+//   //   throw new ApiError(400, "Avatar and cover image are required");
+//   // }
+//   //validation
+//   //   if (!fullname?.trim() === "") {
+//   //     throw new ApiError(400, "fields are required");
+//   //   }
+//   console.log(req.body);
+//   if (
+//     [fullname, username, email, password].some((field) => field?.trim() === "")
+//   ) {
+//     throw new ApiError(400, "All fields are required");
+//   }
+//   const userExists = await User.findOne({ $or: [{ username }, { email }] });
+
+//   if (userExists) {
+//     throw new ApiError(409, "Username or email already exists");
+//   }
+
+//   console.warn("req.files", req.files);
+//   const avatarLocalPath = req.files?.avatar[0]?.path;
+//   const coverImageLocalPath = req.files?.coverImage[0]?.path;
+
+//   if (!avatarLocalPath) {
+//     throw new ApiError(400, "Avatar is missing");
+//   }
+//   if (!coverImageLocalPath) {
+//     throw new ApiError(400, "Cover image is missing");
+//   }
+// if (avatarLocalPath) {
+//   const avatar = await uploadOnCloudinary(avatarLocalPath);
+// }
+// if (coverImageLocalPath) {
+//   const coverImage = await uploadOnCloudinary(coverImageLocalPath);
+// }
+
 const registerUser = asyncHandler(async (req, res) => {
-  // if (!res.body) {
-  //   throw new ApiError(400, "Request body is missing");
-  // }
+  if (!req.body) {
+    throw new ApiError(400, "Request body is missing");
+  }
+
   const { fullname, username, email, password } = req.body;
 
-  // if (!req.files || !req.files.avatar || !req.files.coverImage) {
-  //   throw new ApiError(400, "Avatar and cover image are required");
-  // }
-  //validation
-  //   if (!fullname?.trim() === "") {
-  //     throw new ApiError(400, "fields are required");
-  //   }
   if (
-    [fullname, username, email, password].some((field) => field?.trim() === "")
+    [fullname, username, email, password].some(
+      (field) => typeof field !== "string" || field.trim() === ""
+    )
   ) {
-    throw new ApiError(400, "All fields are required");
+    throw new ApiError(
+      400,
+      "All fields are required and must be valid strings"
+    );
   }
-  const userExists = await User.findOne({ $or: [{ username }, { email }] });
+
+  const userExists = await User.findOne({
+    $or: [{ username: username.toLowerCase() }, { email }],
+  });
 
   if (userExists) {
     throw new ApiError(409, "Username or email already exists");
   }
 
-  console.warn("req.files", req.files);
-  const avatarLocalPath = req.files?.avatar[0]?.path;
-  const coverImageLocalPath = req.files?.coverImage[0]?.path;
+  if (!req.files?.avatar?.[0]?.path || !req.files?.coverImage?.[0]?.path) {
+    throw new ApiError(400, "Avatar and cover image are required");
+  }
 
-  if (!avatarLocalPath) {
-    throw new ApiError(400, "Avatar is missing");
-  }
-  if (!coverImageLocalPath) {
-    throw new ApiError(400, "Cover image is missing");
-  }
-  // if (avatarLocalPath) {
-  //   const avatar = await uploadOnCloudinary(avatarLocalPath);
-  // }
-  // if (coverImageLocalPath) {
-  //   const coverImage = await uploadOnCloudinary(coverImageLocalPath);
-  // }
+  const avatarLocalPath = req.files.avatar[0].path;
+  const coverImageLocalPath = req.files.coverImage[0].path;
 
   let avatar, coverImage;
+
   try {
-    avatar = await uploadOnCloudinary(avatarLocalPath);
-    coverImage = await uploadOnCloudinary(coverImageLocalPath);
-  } catch (error) {
-    throw new ApiError(500, "Error uploading images to Cloudinary");
+    [avatar, coverImage] = await Promise.all([
+      uploadOnCloudinary(avatarLocalPath),
+      uploadOnCloudinary(coverImageLocalPath),
+    ]);
+  } catch (err) {
+    console.error("Cloudinary upload failed:", err);
+    throw new ApiError(500, "Failed to upload images");
   }
 
   try {
     const user = await User.create({
       fullname,
       avatar: avatar.url,
-      coverImage: coverImage?.url || "",
+      coverImage: coverImage.url || "",
       username: username.toLowerCase(),
       email,
       password,
     });
 
     const createdUser = await User.findById(user._id).select(
-      "-password -refreshToken "
+      "-password -refreshToken"
     );
-
     if (!createdUser) {
-      throw new ApiError(500, "Something went wrong while registering");
+      throw new ApiError(500, "User registration incomplete");
     }
+
+    console.log("User Created");
+
     return res
       .status(200)
-      .json(new ApiResponse(200, createdUser, "User Registered Successfully"));
+      .json(new ApiResponse(200, createdUser, "User registered successfully"));
   } catch (error) {
-    if (avatar) {
-      await deleteFromCloudinary(avatar.public_id);
-    }
-    if (coverImage) {
-      await deleteFromCloudinary(coverImage.public_id);
-    }
+    console.error("User creation failed:", error);
+    if (avatar?.public_id) await deleteFromCloudinary(avatar.public_id);
+    if (coverImage?.public_id) await deleteFromCloudinary(coverImage.public_id);
+
     throw new ApiError(
       500,
-      "Something went wrong while registering Image deleted successfully"
+      "Registration failed. Uploaded images have been removed"
     );
-    return res
-      .status(500)
-      .json(new ApiResponse(500, null, "Something went wrong"));
   }
 });
 const loginUser = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
+  // Input validation
 
-  const user = await User.findOne({ $or: [{ username }, { email }] });
+  console.log(req.body);
+  if (
+    (!username && !email) ||
+    !password ||
+    typeof password !== "string" ||
+    password.trim() === ""
+  ) {
+    throw new ApiError(400, "Username/email and password are required");
+  }
+  let userQuery = [];
+  if (username) userQuery.push({ username });
+  if (email) userQuery.push({ email });
+  const user = await User.findOne({ $or: userQuery });
   if (!user) {
     throw new ApiError(404, "User not found");
   }
@@ -171,16 +219,22 @@ const loginUser = asyncHandler(async (req, res) => {
   if (!userData) {
     throw new ApiError(500, "Something went wrong while logging in");
   }
-  const { accessToken, refreshToken } = await generateAccessAndRefreshToken(
-    user._id
-  );
-
+  let accessToken, refreshToken;
+  try {
+    ({ accessToken, refreshToken } = await generateAccessAndRefreshToken(
+      user._id
+    ));
+  } catch (error) {
+    console.error("Token generation error:", error);
+    throw new ApiError(500, "Token generation failed");
+  }
   const option = {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "strict",
   };
 
+  console.log("User Logined");
   return res
     .status(200)
     .cookie("accessToken", accessToken, option)
@@ -195,7 +249,29 @@ const loginUser = asyncHandler(async (req, res) => {
 });
 
 const logoutUser = asyncHandler(async (req, res) => {
-  await User.findByIdAndUpdate();
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: {
+        refreshToken: undefined,
+      },
+    },
+    { new: true }
+  );
+
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+  };
+
+  console.log("User Logout");
+
+  return res
+    .status(200)
+    .clearCookie("accessToken")
+    .clearCookie("refreshToken")
+    .json(new ApiResponse(200, "User logged out successfully"));
 });
 
-export { registerUser, loginUser, logoutUser };
+export { registerUser, loginUser, refreshAccessToken, logoutUser };

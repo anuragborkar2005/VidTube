@@ -5,9 +5,11 @@ import {
   logoutUser,
 } from "../controllers/user.controllers.js";
 import { upload } from "../middlewares/multer.middlewares.js";
+import { verifyJwt } from "../middlewares/auth.middlewares.js";
 
 const router = Router();
 
+//secured route
 router.route("/register").post(
   upload.fields([
     {
@@ -21,7 +23,7 @@ router.route("/register").post(
   ]),
   registerUser
 );
-router.route("/login").get(loginUser);
-router.route("/logout").get(logoutUser);
+router.route("/login").post(loginUser);
+router.route("/logout").post(verifyJwt, logoutUser);
 
 export default router;
